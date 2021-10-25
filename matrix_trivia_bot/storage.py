@@ -1,4 +1,7 @@
 import logging
+import operator
+import time
+import html
 from typing import Any, Dict
 
 # The latest migration version of the database.
@@ -36,6 +39,7 @@ class Storage:
         self.current_question = 0
         self.scores = {}
         self.fails = 0
+        self.latest_question_time = 0
 
         # Try to check the current migration version
         migration_level = 0
@@ -54,6 +58,9 @@ class Storage:
     def current_answer(self):
         return self.questions[self.current_question]["correct_answer"]
 
+    def current_category(self):
+        return self.questions[self.current_question]["category"]
+
     def current_question_text(self):
         return self.questions[self.current_question]["question"]
 
@@ -63,6 +70,31 @@ class Storage:
     def current_wrong_answers(self):
         return [a.lower() for a in self.questions[self.current_question]["incorrect_answers"]]
 
+    def run_next_questions(self, first=False):
+        self.fails = 0
+        if first:
+            self.current_question = 0
+        else:
+            self.current_question += 1
+        self.latest_question_time = time.time()
+        if self.current_question >= len(self.questions):
+            text = """Quizz ended ! Scores: 
+ - {}""".format("\n - ".join(self.scores_to_text()))
+            self.scores = {}
+            return text
+        else:
+            if "which of the" in self.current_question_text().lower():
+                return """Question {}, Category {} : {} - {}""".format(
+                                    self.current_question+1, 
+                                    self.current_category(),
+                                    self.current_question_text(),
+                                    " - ".join(self.current_answers()))
+            else:
+                return """Question {}, Category {} : {}""".format(
+                                    self.current_question+1, 
+                                    self.current_category(),
+                                    self.current_question_text())
+
     def champion(self):
         champion = ""
         score = 0
@@ -70,7 +102,10 @@ class Storage:
             if self.scores[player] > score:
                 champion = player
         return champion
-        
+    
+    def scores_to_text(self):
+        return ["{} : {} points".format(p, s) for p, s in sorted(self.scores.items(), key=operator.itemgetter(1))]
+
     def _get_database_connection(
         self, database_type: str, connection_string: str
     ) -> Any:

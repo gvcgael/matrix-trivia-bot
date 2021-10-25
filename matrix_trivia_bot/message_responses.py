@@ -1,4 +1,6 @@
 import logging
+import textdistance
+import time
 
 from nio import AsyncClient, MatrixRoom, RoomMessageText
 
@@ -44,12 +46,13 @@ class Message:
     async def process(self) -> None:
         """Process and possibly respond to the message"""
 
-        if len(self.store.questions) > 0:
+        if len(self.store.questions) > 0 and self.store.current_question < len(self.store.questions):
             logger.debug(
-                f"Message {self.message_content.lower()} | Answer {self.store.current_answer().lower()}"
-                f"{self.message_content.lower() == self.store.current_answer().lower()}"
+                f"Message {self.message_content.lower()} | Answer {self.store.current_answer().lower()} |" 
+                f"{textdistance.levenshtein.normalized_distance(self.message_content.lower(), self.store.current_answer().lower()) }"
             )
-            if self.message_content.lower() == self.store.current_answer().lower():
+            
+            if textdistance.levenshtein.normalized_distance(self.message_content.lower(), self.store.current_answer().lower()) <= 0.25:
                 await send_text_to_room(self.client, self.room.room_id, "Correct ! Answer is {}".format(self.store.current_answer()))
                 player = self.room.user_name(self.event.sender)
                 if player in self.store.scores:
@@ -58,23 +61,17 @@ class Message:
                     self.store.scores[player] = 1
                 await send_text_to_room(self.client, self.room.room_id, "{} now has {} points".format(player, self.store.scores[player]))
                 await self.start_next_question()
-            elif self.message_content.lower() in self.store.current_wrong_answers():
-                await send_text_to_room(self.client, self.room.room_id, "Nope! Answer is not {}".format(self.message_content))
-                self.store.fails += 1
-                if self.store.fails > 5:
-                    await send_text_to_room(self.client, self.room.room_id, "Morron! Answer was {}".format(self.store.current_answer()))
-                    await self.start_next_question()
+            elif textdistance.levenshtein.normalized_distance(self.message_content.lower(), self.store.current_answer().lower()) <= 0.4:
+                await send_text_to_room(self.client, self.room.room_id, "So close ! But answer is not {}".format(self.message_content))
+            else:
+                for wrong in self.store.current_wrong_answers(): 
+                    if textdistance.levenshtein.normalized_distance(self.message_content.lower(), wrong) <= 0.25:
+                        await send_text_to_room(self.client, self.room.room_id, "Nope! Answer is not {}".format(self.message_content))
+                        self.store.fails += 1
+                        if self.store.fails > 2:
+                            await send_text_to_room(self.client, self.room.room_id, "Morron! Answer was {}".format(self.store.current_answer()))
+                            await self.start_next_question()
 
 
     async def start_next_question(self):
-        self.store.fails = 0
-        self.store.current_question += 1
-        if self.store.current_question >= len(self.store.questions):
-            await send_text_to_room(self.client, self.room.room_id, "Quizz ended ! Clap clap for the victorious ! {}".format(self.store.champion()))
-            self.store.scores = {}
-        else:
-            await send_text_to_room(self.client, self.room.room_id, """Question {} : {} 
- - {}""".format(
-                                                                    self.store.current_question+1, 
-                                                                    self.store.current_question_text(), 
-                                                                    "\n - ".join(self.store.current_answers())))
+        await send_text_to_room(self.client, self.room.room_id, self.store.run_next_questions())
